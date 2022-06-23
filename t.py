@@ -43,7 +43,7 @@ def grabPrice():
         currentPrice = int(re.search('data-expected-price="(.*?)"', itemInfo).group(1))
         sellerId = re.search('data-expected-seller-id="(.*?)"', itemInfo).group(1)
 
-        if userId != sellerId and currentPrice > minimum_price:
+        if userId != sellerId and currentPrice > int(minimum_price):
             print(f'{Fore.WHITE}[{Fore.YELLOW}={Fore.WHITE}] {Fore.YELLOW}{sellerId}{Fore.WHITE} was selling lower than you, relisting for {Fore.YELLOW}{currentPrice-1}{Fore.WHITE} robux')
             x = putOffSale()
             if x == 'Sold':
