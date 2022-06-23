@@ -5,6 +5,7 @@ init()
 os.system('cls')
 
 config = json.load(open('config.json','r'))
+minimum_price = config['minimum_price']
 webhook = config['webhook']
 assetId = config['assetId']
 cookie = config['cookie']
@@ -42,7 +43,7 @@ def grabPrice():
         currentPrice = int(re.search('data-expected-price="(.*?)"', itemInfo).group(1))
         sellerId = re.search('data-expected-seller-id="(.*?)"', itemInfo).group(1)
 
-        if userId != sellerId:
+        if userId != sellerId and currentPrice > minimum_price:
             print(f'{Fore.WHITE}[{Fore.YELLOW}={Fore.WHITE}] {Fore.YELLOW}{sellerId}{Fore.WHITE} was selling lower than you, relisting for {Fore.YELLOW}{currentPrice-1}{Fore.WHITE} robux')
             x = putOffSale()
             if x == 'Sold':
