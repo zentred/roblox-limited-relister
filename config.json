@@ -1,5 +1,6 @@
 {
   "cookie": "put roblox cookie here",
   "webhook": "discord webhook here",
-  "assetId": "put assetid of limited you want to sell"
+  "assetId": "put assetid of limited you want to sell",
+  "minimum_price": "limited will not be relisted if it goes under this price"
 }
