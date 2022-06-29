@@ -9,6 +9,7 @@ minimum_price = config['minimum_price']
 webhook = config['webhook']
 assetId = config['assetId']
 cookie = config['cookie']
+sell_under_rap = config['sell_under_rap']
 currentSellingPrice = ''
 userAssetId = ''
 
@@ -16,6 +17,13 @@ userId = str(requests.get('https://www.roblox.com/mobileapi/userinfo', cookies={
 infoReq = requests.get(f'https://api.roblox.com/marketplace/productinfo?assetId={assetId}').json()
 productId = infoReq['ProductId']
 itemName = infoReq['Name']
+currentRap = 0
+
+def checkRap():
+    global currentRap
+    while True:
+        currentRap = requests.get(f'https://economy.roblox.com/v1/assets/{assetId}/resale-data').json()['recentAveragePrice']
+        time.sleep(60)
 
 def getUserAssetId():
     global userAssetId
@@ -44,6 +52,10 @@ def grabPrice():
         sellerId = re.search('data-expected-seller-id="(.*?)"', itemInfo).group(1)
 
         if userId != sellerId and currentPrice > int(minimum_price):
+            if sell_under_rap == False and currentPrice <= currentRap:
+                time.sleep(5)
+                continue
+                
             print(f'{Fore.WHITE}[{Fore.YELLOW}={Fore.WHITE}] {Fore.YELLOW}{sellerId}{Fore.WHITE} was selling lower than you, relisting for {Fore.YELLOW}{currentPrice-1}{Fore.WHITE} robux')
             x = putOffSale()
             if x == 'Sold':
@@ -129,5 +141,8 @@ def putOnSale(currentPrice):
             print(f'[{Fore.RED}-{Fore.WHITE}] {Fore.RED}{itemName} {Fore.WHITE}was NOT put onsale: {str(sale)}')
             return None
 
+if sell_under_rap == False:
+    threading.Thread(target=checkRap).start()
+time.sleep(3)
 getUserAssetId()
 grabPrice()
