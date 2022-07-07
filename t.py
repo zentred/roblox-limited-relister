@@ -1,148 +1,119 @@
-import requests, os, json, time, re
+import requests, os, json, time, re, threading
 from colorama import Fore, init
 init()
 
-os.system('cls')
-
 config = json.load(open('config.json','r'))
-minimum_price = config['minimum_price']
-webhook = config['webhook']
-assetId = config['assetId']
-cookie = config['cookie']
-sell_under_rap = config['sell_under_rap']
-currentSellingPrice = ''
-userAssetId = ''
 
-userId = str(requests.get('https://www.roblox.com/mobileapi/userinfo', cookies={'.ROBLOSECURITY': cookie}).json()['UserID'])
-infoReq = requests.get(f'https://api.roblox.com/marketplace/productinfo?assetId={assetId}').json()
-productId = infoReq['ProductId']
-itemName = infoReq['Name']
-currentRap = 0
+class Run:
 
-def checkRap():
-    global currentRap
-    while True:
-        currentRap = requests.get(f'https://economy.roblox.com/v1/assets/{assetId}/resale-data').json()['recentAveragePrice']
-        time.sleep(60)
+    def __init__(self, config):
+        self.robloxCookie = config['robloxCookie']
+        self.discordWebhook = config['discordWebhook']
+        self.sellUnderRap = config['sellUnderRap']
+        self.relistInventory = config['relistInventory']
+        self.dontSell = config['dontSell']
+        self.myItems = config['myItems']
+        self.req = requests.Session()
+        self.req.cookies['.ROBLOSECURITY'] = self.robloxCookie
+        self.inventoryData = {}
+        self.userId = None
+        self.important()
 
-def getUserAssetId():
-    global userAssetId
-    cursor = ''
-    while cursor != None:
-        r = requests.get(f'https://inventory.roblox.com/v1/users/{userId}/assets/collectibles?sortOrder=Asc&limit=100&cursor={cursor}').json()
-        if 'data' in r:
-            for item in r['data']:
-                if item['assetId'] == int(assetId):
-                    userAssetId = item['userAssetId']
-                    print(f'[{Fore.LIGHTCYAN_EX}={Fore.WHITE}] Found matching assetId ({Fore.LIGHTCYAN_EX}{assetId}{Fore.WHITE}) in inventory > userAssetId = {Fore.LIGHTCYAN_EX}{userAssetId}')
-                    return None
-            cursor = r['nextPageCursor']
-        else:
-            print(f'[{Fore.RED}-{Fore.WHITE}] Ratelimited, waiting {Fore.RED}60{Fore.WHITE} seconds')
-    print(f'[{Fore.RED}={Fore.WHITE}] Unable to find {Fore.RED}{assetId}{Fore.WHITE} in your inventory')
+    def grabTotalInventory(self):
+        inventory = self.req.get(f'https://inventory.roblox.com/v1/users/{self.userId}/assets/collectibles?sortOrder=Asc&limit=100').json()
+        if 'data' in inventory:
+            if config['relistInventory'] == True:
+                for item in inventory['data']:
+                    if item['assetId'] not in self.dontSell:
+                        self.inventoryData[str(item['assetId'])] = [item['userAssetId'], item['recentAveragePrice'], item['name'], 0]
+            else:
+                for item in inventory['data']:
+                    if str(item['assetId']) in self.myItems:
+                        self.inventoryData[str(item['assetId'])] = [item['userAssetId'], item['recentAveragePrice'], item['name'], self.myItems[str(item['assetId'])]['minimumPrice']]
 
+    def updateRap(self):
+        while True:
+            inventory = self.req.get(f'https://inventory.roblox.com/v1/users/{self.userId}/assets/collectibles?sortOrder=Asc&limit=100').json()
+            if 'data' in inventory:
+                for item in inventory['data']:
+                    if str(item['assetId']) in self.inventoryData:
+                        self.inventoryData[str(item['assetId'])][1] = item['recentAveragePrice']
+            time.sleep(60)
 
-def getCsrf():
-    return requests.post('https://auth.roblox.com/v2/login', cookies={'.ROBLOSECURITY': cookie}).headers['X-CSRF-TOKEN']
+    def grabPrice(self):
+        while True:
+            for item in self.inventoryData:
+                userAssetId, recentAveragePrice, itemName, minimumPrice = self.inventoryData[item][0], self.inventoryData[item][1], self.inventoryData[item][2], self.inventoryData[item][3]
+                itemInfo = self.req.get(f'https://www.roblox.com/catalog/{item}').text
+                currentPrice = int(re.search('data-expected-price="(.*?)"', itemInfo).group(1))
+                sellerId = re.search('data-expected-seller-id="(.*?)"', itemInfo).group(1)
 
-def grabPrice():
-    while True:
-        itemInfo = requests.get(f'https://www.roblox.com/catalog/{assetId}', cookies={'.ROBLOSECURITY': cookie}).text
-        currentPrice = int(re.search('data-expected-price="(.*?)"', itemInfo).group(1))
-        sellerId = re.search('data-expected-seller-id="(.*?)"', itemInfo).group(1)
+                if self.userId != sellerId and currentPrice > minimumPrice:
+                    if self.sellUnderRap == False and currentPrice <= recentAveragePrice: continue
 
-        if userId != sellerId and currentPrice > int(minimum_price):
-            if sell_under_rap == False and currentPrice <= currentRap:
-                time.sleep(5)
-                continue
-                
-            print(f'{Fore.WHITE}[{Fore.YELLOW}={Fore.WHITE}] {Fore.YELLOW}{sellerId}{Fore.WHITE} was selling lower than you, relisting for {Fore.YELLOW}{currentPrice-1}{Fore.WHITE} robux')
-            x = putOffSale()
-            if x == 'Sold':
-                return None
+                    print(f"{Fore.LIGHTCYAN_EX}Your price on '{itemName}' was beat, relisting for {currentPrice-1} robux")
+                    self.toggleSale({'price': currentPrice-1}, userAssetId, item, itemName)
+                    
 
-            z = putOnSale(currentPrice)
-            if z == 'Sold':
-                return None
-        time.sleep(5)
+            time.sleep(30)
 
-def putOffSale():
-    csrf = getCsrf()
-    sale = requests.patch(
-        f'https://economy.roblox.com/v1/assets/{assetId}/resellable-copies/{userAssetId}',
-        cookies={'.ROBLOSECURITY': cookie},
-        json={},
-        headers={'X-CSRF-TOKEN': csrf}
-    ).json()
-    if sale == {}:
-        print(f'[{Fore.MAGENTA}+{Fore.WHITE}] {Fore.MAGENTA}{itemName} {Fore.WHITE}was put offsale (if it was never onsale, ignore)')
-        return None
-    else:
-        if 'The user does not own the asset' in str(sale):
-            print(f'[{Fore.BLUE}+{Fore.WHITE}] {Fore.BLUE}{itemName} {Fore.WHITE}sold for {Fore.BLUE}{currentSellingPrice} {Fore.WHITE}robux')
+    def getCsrf(self):
+        return self.req.post('https://auth.roblox.com/v2/login').headers['X-CSRF-TOKEN']
 
+    def toggleSale(self, json, userAssetId, assetId, itemName):
+        csrf = self.getCsrf()
+        sale = self.req.patch(
+            f'https://economy.roblox.com/v1/assets/{assetId}/resellable-copies/{userAssetId}',
+            json=json,
+            headers={'X-CSRF-TOKEN': csrf}
+        ).json()
+
+        if sale == {}:
+            print(f'{Fore.GREEN}{itemName} was put onsale {Fore.GREEN}for {json["price"]} robux')
+            
             data = {
                 'embeds':[{
                     'color': int('2e88f5',16),
                     'fields': [
-                        {'name': f'{itemName}','value': f'Sold for {currentSellingPrice} robux','inline':False},
+                        {'name': f'{itemName}','value': f'Relisted for {json["price"]}','inline':False},
                     ]
                 }]
             }
-            requests.post(webhook, json=data)
+            requests.post(self.discordWebhook, json=data)
 
-            return 'Sold'
-        else:
-            print(f'[{Fore.RED}-{Fore.WHITE}] {Fore.RED}{itemName} {Fore.WHITE}was NOT put offsale: {str(sale)}')
-            return None
-
-def putOnSale(currentPrice):
-    global currentSellingPrice
-    csrf = getCsrf()
-    sale = requests.patch(
-        f'https://economy.roblox.com/v1/assets/{assetId}/resellable-copies/{userAssetId}',
-        cookies={'.ROBLOSECURITY': cookie},
-        json={'price': currentPrice-1},
-        headers={'X-CSRF-TOKEN': csrf}
-    ).json()
-
-    if sale == {}:
-        currentSellingPrice = currentPrice-1
-
-        print(f'[{Fore.GREEN}+{Fore.WHITE}] {Fore.GREEN}{itemName} {Fore.WHITE}was put onsale for {Fore.GREEN}{currentPrice-1}{Fore.WHITE} robux')
-
-        data = {
-            'embeds':[{
-                'color': int('ff700f',16),
-                'fields': [
-                    {'name': f'{itemName}','value': f'Relisted for {currentPrice-1} robux','inline':False},
-                ]
-            }]
-        }
-        requests.post(webhook, json=data)
-
-        return None
-    else:
-        if 'The user does not own the asset' in str(sale):
-            print(f'[{Fore.BLUE}+{Fore.WHITE}] {Fore.BLUE}{itemName} {Fore.WHITE}sold for {Fore.BLUE}{currentSellingPrice} {Fore.WHITE}robux')
+        elif 'The user does not own the asset' in str(sale):
 
             data = {
                 'embeds':[{
-                    'color': int('2e88f5',16),
+                    'color': int('ff700f',16),
                     'fields': [
-                        {'name': f'{itemName}','value': f'Sold for {currentSellingPrice} robux','inline':False},
+                        {'name': f'{itemName}','value': f'This limited sold','inline':False},
                     ]
                 }]
             }
-            requests.post(webhook, json=data)
+            requests.post(self.discordWebhook, json=data)
+            self.inventoryData.pop(assetId)
 
-            return 'Sold'
+            print(f'{Fore.YELLOW}{itemName} sold!')
         else:
-            print(f'[{Fore.RED}-{Fore.WHITE}] {Fore.RED}{itemName} {Fore.WHITE}was NOT put onsale: {str(sale)}')
-            return None
+            print(f'{Fore.RED}{itemName} sale status was not toggled due to this error: {str(sale)}')
 
-if sell_under_rap == False:
-    threading.Thread(target=checkRap).start()
-time.sleep(3)
-getUserAssetId()
-grabPrice()
+            data = {
+                'embeds':[{
+                    'color': int('ff700f',16),
+                    'fields': [
+                        {'name': f'Unknown Error with {itemName}','value': f'{str(sale)}','inline':False},
+                    ]
+                }]
+            }
+            requests.post(self.discordWebhook, json=data)
+
+
+    def important(self):
+        self.userId = str(self.req.get('https://www.roblox.com/mobileapi/userinfo').json()['UserID'])
+        self.grabTotalInventory()
+        threading.Thread(target=self.updateRap).start()
+        threading.Thread(target=self.grabPrice).start()
+        
+
+c = Run(config)
